@@ -66,6 +66,8 @@ CPSCON1          EQU  H'001F'
 ;----- PORTA Bits -----------------------------------------------------
 RA2              EQU  H'0002'
 
+;----- PIE1 Bits -----------------------------------------------------
+TMR2IE           EQU  H'0001'  
 
 ;===============================================================================
 ;       Variable Definitions
@@ -75,13 +77,47 @@ RA2              EQU  H'0002'
 ;       Configuration
 ;===============================================================================
 
-      	     __CONFIG        B'00000110000100'                                  ; int. oscillator and no code protection   
+      	     __CONFIG        _CONFIG1, B'00000110000100'                        ; int. oscillator and no code protection
+             __CONFIG        _CONFIG2, B'01100011111111'                        ;
+
+
+;-------------------------------------------------------------------------------
+;                             Timer Setup
+;-------------------------------------------------------------------------------
+
+; Timer setup
+timer_init  movlw B'01111011'     			; Prescaler 1:64 / Postscaler 1:16
+			movwf T2CON
+			clrf TMR2
+			movlw D'255'
+			movwf PR2                     	; Overflow after 255 timer pulses
+
+; Interrupt setup
+			banksel PIE1
+			clrf PIE1
+			clrf PIE2
+			bsf PIE1, TMR2IE              	; Enable timer 2 interrupt
+			clrf BSR                      	; select BANK0
+			movlw B'11000000'
+			movwf INTCON                  	; set global irq on
+
+; Start Timer
+			bsf T2CON, D'002'             ; Set TMR2ON bit
+			return
 
 ;-------------------------------------------------------------------------------
 ;                             Main Loop
 ;-------------------------------------------------------------------------------
 
+; Main loop do nothing and wait for timer irq
+main 		nop
+			goto main
+			
+;-------------------------------------------------------------------------------
+;                             Timer Interrupt
+;-------------------------------------------------------------------------------
 
+timer_ir	clrf BSR
 
 ;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
                               END
