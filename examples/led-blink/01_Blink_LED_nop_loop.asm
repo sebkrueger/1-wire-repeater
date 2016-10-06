@@ -1,7 +1,7 @@
 ;*******************************************************************************
 ;*                        01 Blink LED Example                                 *
 ;* This example work with loop that create the delay and a subroutine for      *
-;* LED Status switch. PIC will drive at 4 Mhz = 1 uS per Cycle                                                                            *
+;* LED Status switch. PIC will drive at 4 Mhz = 1 uS per Cycle                 *
 ;*                                                                             *
 ;*                                 v1.00                                       *
 ;*******************************************************************************
@@ -20,12 +20,12 @@ ENDIF
 ; CONFIG1
 ; __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_ON & _PWRTE_OFF & _MCLRE_OFF 
 ;      & _CP_OFF & _CPD_OFF & _BOREN_ON & _CLKOUTEN_OFF & _IESO_ON & _FCMEN_ON
-__CONFIG 0x8007, B'1111111110111100'
+__CONFIG 0x8007, B'1111111110100100'
 
 ; CONFIG2
 ; __CONFIG _CONFIG2, _WRT_OFF & _PLLEN_ON & _STVREN_ON & _BORV_LO & _LVP_ON
 __CONFIG 0x8008, B'1111111111111111'
-    
+
 ;-------------------------------------------------------------------------------
 ;Pin connection
 ;----------------------------------------
@@ -72,7 +72,7 @@ J				EQU  H'0071'			; loop var in common ram
 setIntOsc	movlb 1						; Select BANK 1  
 			movlw B'11101000'			; Set intern Osc to 4Mhz
 			movwf OSCCON				; Store in OSCCON Register
-		
+
 initportA	movlb 0						; Select BANK 0 
 			clrf PORTA					; Init PORTA
 			movlb 2						; Select BANK 2 
@@ -84,13 +84,13 @@ initportA	movlb 0						; Select BANK 0
 			movwf TRISA					; and set RA2 as output
 			movlb 0						; Select BANK 0 
 			bsf PORTA, RA2				; Set Output high 
-			
+
 ;-------------------------------------------------------------------------------
 ;       Main Loop
 ;-------------------------------------------------------------------------------
 
 ; Main loop do nothing than loop around
-main 		movlw D'250'				; init counter var I
+main		movlw D'250'				; init counter var I
 			movwf I
 loopi		decfsz I, 1					; --I and result back to I
 			goto innerloop				; until i==0 do inner J loop
