@@ -13,12 +13,12 @@
 ;       Hardware Check
 ;===============================================================================
 
-IFNDEF __12LF1840
+IFNDEF __12F1840
    MESSG "Processor-header file mismatch.  Verify selected processor."
 ENDIF
 
 ; CONFIG1
-; __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_ON & _PWRTE_OFF & _MCLRE_OFF 
+; __CONFIG _CONFIG1, _FOSC_INTOSC & _WDTE_OFF & _PWRTE_OFF & _MCLRE_OFF 
 ;      & _CP_OFF & _CPD_OFF & _BOREN_ON & _CLKOUTEN_OFF & _IESO_ON & _FCMEN_ON
 __CONFIG 0x8007, B'1111111110100100'
 
@@ -42,22 +42,22 @@ __CONFIG 0x8008, B'1111111111111111'
 ;       Register Definitions
 ;===============================================================================
 
-W				EQU  H'0000'
-PORTA			EQU  H'000C'			; Bank 0
-TRISA			EQU  H'008c'			; Bank 1
-OSCCON			EQU  H'0099'			; Bank 1
-LATA			EQU  H'010C'			; Bank 2
-ANSELA			EQU  H'018c'			; Bank 3
+
+PORTA			EQU H'00c'				; Bank 0
+TRISA			EQU H'08c'				; Bank 1
+OSCCON			EQU H'099'				; Bank 1
+LATA			EQU H'10c'				; Bank 2
+ANSELA			EQU H'18c'				; Bank 3
 
 ;----- PORTA Bits -----------------------------------------------------
-RA2				EQU  H'0002'
+RA2				EQU D'2'
 
 ;===============================================================================
 ;       Variable Definitions
 ;===============================================================================
 
-I				EQU  H'0070' 			; loop var in common ram
-J				EQU  H'0071'			; loop var in common ram
+I				EQU H'070'				; loop var in common ram
+J				EQU H'071'				; loop var in common ram
 
 ;===============================================================================
 ;       Configuration
@@ -76,7 +76,7 @@ setIntOsc	movlb 1						; Select BANK 1
 initportA	movlb 0						; Select BANK 0 
 			clrf PORTA					; Init PORTA
 			movlb 2						; Select BANK 2 
-			clrf LATA 
+			clrf LATA
 			movlb 3						; Select BANK 3 
 			clrf ANSELA					; all digital I/O
 			movlb 1						; Select BANK 1
