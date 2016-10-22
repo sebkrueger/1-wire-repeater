@@ -41,9 +41,16 @@ __CONFIG 0x8008, B'1111111111111111'
 ;===============================================================================
 ;       Register Definitions
 ;===============================================================================
+
+STATUS          EQU H'003'          ; Bank 0
 INTCON          EQU H'00b'          ; Bank 0
-PORTA           EQU H'00C'          ; Bank 0
+PORTA           EQU H'00C'          ; Bank 0 - Port A
 PIR1            EQU H'011'          ; Bank 0
+TMR0            EQU H'015'          ; Bank 0 - Timer 0
+TMR1L           EQU H'016'          ; Bank 0
+TMR1H           EQU H'017'          ; Bank 0
+T1CON           EQU H'018'          ; Bank 0
+T1GCON          EQU H'019'          ; Bank 0
 TRISA           EQU H'08c'          ; Bank 1
 PIE1            EQU H'091'          ; Bank 1
 PIE2            EQU H'092'          ; Bank 1
@@ -54,11 +61,17 @@ ANSELA          EQU H'18c'          ; Bank 3
 WPUA            EQU H'20c'          ; Bank 4
 
 ;----- Register Function Bits --------------------------------------------------
-WPUEN           EQU D'7'            ; Weak-Pull-up enable
+C               EQU D'0'            ; Carry bit
+DC              EQU D'1'            ;
+Z               EQU D'2'            ; Zero bit
+WPUEN           EQU D'7'            ; Weak-Pull-up enable (in OPTION Reg)
 WPUEA0          EQU D'0'            ; Weak-Pull-up bit RA2
 WPUEA2          EQU D'2'            ; Weak-Pull-up bit RA2
-INTEDG          EQU D'6'            ; Interrupt edge select
-INTF            EQU D'1'            ; External Interrupt flag
+INTEDG          EQU D'6'            ; Interrupt edge select (in OPTION Reg)
+INTF            EQU D'1'            ; External Interrupt flag (in INTCON Reg)
+PSA             EQU D'3'            ; Prescaler assignment TMR 0 (in OPTION Reg)
+TMR0CS          EQU D'5'            ; Timer 0 Clock Source (in OPTION Reg)
+TMR0IF          EQU D'2'            ; Timer 0 overflow (in INTCON Reg)
 
 ;----- PORTA Bits --------------------------------------------------------------
 RA0             EQU D'0'
@@ -70,11 +83,16 @@ RA2             EQU D'2'
 
 I               EQU H'0070'          ; loop var in common ram
 
-RH_INT          EQU H'0075'          ; Integer value of Rel. Humidity (8 Bit)
-RH_DECIMAL      EQU H'0076'          ; Decimal value of Rel. Humidity (8 Bit)
-T_INT           EQU H'0077'          ; Integer value of Temperature (8 Bit)
-T_DECIMAL       EQU H'0078'          ; Decimal value of Temperature (8 Bit)
-CHC_RH_T        EQU H'0089'          ; 8 Bit Checksum add of H75-H78
+RH_INT          EQU H'0071'          ; Integer value of Rel. Humidity (8 Bit)
+RH_DECIMAL      EQU H'0072'          ; Decimal value of Rel. Humidity (8 Bit)
+T_INT           EQU H'0073'          ; Integer value of Temperature (8 Bit)
+T_DECIMAL       EQU H'0074'          ; Decimal value of Temperature (8 Bit)
+CHC_RH_T        EQU H'0075'          ; 8 Bit Checksum add of H75-H78
+
+PISTATE         EQU H'0076'          ; Pi side status
+DHTSTATE        EQU H'0077'          ; DHT22 side status
+BITCOUNTER_TX   EQU H'0078'          ; Count the number of send bits
+BITCOUNTER_RX   EQU H'0079'          ; Count the number of received bits
 
 ;===============================================================================
 ;       Configuration
@@ -107,8 +125,14 @@ initportA   movlb 0                     ; Select BANK 0
             bsf WPUEN, WPUEA2           ; Enable weak pull-up on RA2
             bsf WPUEN, WPUEA0           ; Enable weak pull-up on RA0
 
-initTimer1
+resetstate  clrf PISTATE                ; Reset PI Status
+            clrf DHTSTAT                ; Reset DHT22 Status
 
+initTimer0  bcf OPTION_REG, PSA         ; Use the prescaler of Timer 0
+            bcf OPTION_REG, TMR0CS      ; Use intern clock source for T0
+            bsf OPTION_REG, D'0'        ; Prescaler Timer 0 to  1:64
+            bcf OPTION_REG, D'1'        ; that mean 1 bit = 64 uS
+            bsf OPTION_REG, D'2'
 
 initIRQ     movlb 1                     ; Select BANK 1
             clrf PIE1                   ; Disable all interrupt sources
@@ -116,14 +140,13 @@ initIRQ     movlb 1                     ; Select BANK 1
             bcf OPTION_REG, INTEDG      ; Interrupt on falling edge
             movlb 0                     ; Select BANK 0
             movlw B'10010000'           ; Enable interrupt global (GIE)
-            movwf INTCON                ; and INTE
-
+            movwf INTCON                ; and INTE, set no IRQ on timers
 
 ;-------------------------------------------------------------------------------
 ;       Main Loop
 ;-------------------------------------------------------------------------------
 
-; Main loop do nothing than loop around and wait for timer interrupt
+; Main loop do nothing than loop around and wait for interrupts
 main        nop
             goto main                   ; Endless main loooooooop
 
@@ -132,11 +155,54 @@ main        nop
 ;-------------------------------------------------------------------------------
 
 ; Bit GIE of INTCON is cleared in HW
-ir_main     ;lots of code has to write here
+ir_main     btfsc INTCON, INTF          ; Test for extern IRQ
+            goto ext_ir                 ; Interrupt on extern pin
+            goto errorcase              ; no interrupt source match = Error!!
 
+; --------- handling when interrupt on extern pin start here -------------------
+ext_ir      movf PISTATE, 0             ; move pistate to w
+            xorlw D'00000000'           ; Test if State is zero ("start")
+            btfsc STATUS, Z             ; compare don't match -> skip next goto
+            goto extcommstart           ; We start in pi side with communication
+            movf PISTATE, 0             ; move pistate to w
+            xorlw D'00000001'           ; Test if State is 1 ("send")
+            btfsc STATUS, Z             ; compare don't match -> skip next goto
+            goto extcommsend            ; We set pi side to send mode
+            ; Test for more states here, if needed
+
+            goto errorcase              ; no PISTATE match = Error!!
+;----------- pi state code start here ------------------------------------------
+extcommstart
+            movlb 0                     ; Select BANK 0
+            clrf TMR0                   ; Set timer 0 to zero
+            bcf INTCON, TMR0IF          ; reset timer 0 overflow bit
+            movlb 1                     ; Select BANK 1
+            bsf OPTION_REG, INTEDG      ; set interrupt on raising edge
+            goto end_ext_ir
+
+
+extcommsend                             ; we expect more then 150(~10ms) in TMR0
+            movlb 0                     ; Select BANK 0
+            btfsc INTCON, TMR0IF        ; check Timer 0 overflow bit
+            goto errorcase              ; upps t0 overflow - far more than 10ms
+            movf TMR0, 0                ; Timer 0 count to W
+            sublw D'180'                ; Check if W smaller than 180
+            btfsc STATUS, C             ; C bit is set (W<=k) -> skip next goto
+            goto errorcase              ; Time has to been to long = Error!!
+            sublw D'30'                 ; Check if W has been greater than 150
+            btfsc STATUS, C             ; W should't be grater than 30 (180-150)
+            goto errorcase              ; Time has to been to short = Error!!
+            ; No timing error we go to send mode :)
+
+;----------- interrupt teardown start here -------------------------------------
             ; Clear interrupt source for next run
-end_ir      bcf INTCON, INTF            ; Clear external interrupt flag
-            retfie                      ; Sets bit GIE of INTCON too
+end_ext_ir  bcf INTCON, INTF            ; Clear external interrupt flag
+            goto end_ir
+
+end_ir      retfie                      ; Sets bit GIE of INTCON too
+
+errorcase   reset                       ; not sure for now, what to do here
+                                        ; reset?
 
 ;XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
                                 END
