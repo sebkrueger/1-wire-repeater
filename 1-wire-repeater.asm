@@ -51,7 +51,7 @@ TMR1L           EQU H'016'          ; Bank 0
 TMR1H           EQU H'017'          ; Bank 0
 T1CON           EQU H'018'          ; Bank 0
 T1GCON          EQU H'019'          ; Bank 0
-TRISA           EQU H'08c'          ; Bank 1
+TRISA           EQU H'08c'          ; Bank 1 - I/O Contol
 PIE1            EQU H'091'          ; Bank 1
 PIE2            EQU H'092'          ; Bank 1
 OPTION_REG      EQU H'095'          ; Bank 1
@@ -72,6 +72,7 @@ INTF            EQU D'1'            ; External Interrupt flag (in INTCON Reg)
 PSA             EQU D'3'            ; Prescaler assignment TMR 0 (in OPTION Reg)
 TMR0CS          EQU D'5'            ; Timer 0 Clock Source (in OPTION Reg)
 TMR0IF          EQU D'2'            ; Timer 0 overflow (in INTCON Reg)
+TMR0IE          EQU D'5'            ; Timer 0 enable (in INTCON Reg)
 
 ;----- PORTA Bits --------------------------------------------------------------
 RA0             EQU D'0'
@@ -126,13 +127,25 @@ initportA   movlb 0                     ; Select BANK 0
             bsf WPUEN, WPUEA0           ; Enable weak pull-up on RA0
 
 resetstate  clrf PISTATE                ; Reset PI Status
-            clrf DHTSTAT                ; Reset DHT22 Status
+            clrf DHTSTATE               ; Reset DHT22 Status
 
-initTimer0  bcf OPTION_REG, PSA         ; Use the prescaler of Timer 0
+initTimer0  movlb 1                     ; Select BANK 1
+            bcf OPTION_REG, PSA         ; Use the prescaler of Timer 0
             bcf OPTION_REG, TMR0CS      ; Use intern clock source for T0
             bsf OPTION_REG, D'0'        ; Prescaler Timer 0 to  1:64
             bcf OPTION_REG, D'1'        ; that mean 1 bit = 64 uS
             bsf OPTION_REG, D'2'
+
+initTestVal movlw D'70'                 ; Write Test values to RAM
+            movwf RH_INT
+            movlw D'5'
+            movwf RH_DECIMAL
+            movlw D'25'
+            movwf T_INT
+            movlw D'34'
+            movwf T_DECIMAL
+            movlw D'134'                ; Checksum
+            movwf CHC_RH_T
 
 initIRQ     movlb 1                     ; Select BANK 1
             clrf PIE1                   ; Disable all interrupt sources
@@ -155,32 +168,40 @@ main        nop
 ;-------------------------------------------------------------------------------
 
 ; Bit GIE of INTCON is cleared in HW
-ir_main     btfsc INTCON, INTF          ; Test for extern IRQ
+ir_main     movlb 0                     ; Select BANK 0
+            btfsc INTCON, INTF          ; Test for extern IRQ
             goto ext_ir                 ; Interrupt on extern pin
+            btfsc INTCON, TMR0IF        ; Test for Timer 0 IRQ
+            goto tmr0send               ; Send bits out
             goto errorcase              ; no interrupt source match = Error!!
 
 ; --------- handling when interrupt on extern pin start here -------------------
 ext_ir      movf PISTATE, 0             ; move pistate to w
-            xorlw D'00000000'           ; Test if State is zero ("start")
+            xorlw B'00000000'           ; Test if State is zero ("start")
             btfsc STATUS, Z             ; compare don't match -> skip next goto
             goto extcommstart           ; We start in pi side with communication
             movf PISTATE, 0             ; move pistate to w
-            xorlw D'00000001'           ; Test if State is 1 ("send")
+            xorlw B'00000001'           ; Test if State is 1 ("send")
             btfsc STATUS, Z             ; compare don't match -> skip next goto
             goto extcommsend            ; We set pi side to send mode
             ; Test for more states here, if needed
 
             goto errorcase              ; no PISTATE match = Error!!
 ;----------- pi state code start here ------------------------------------------
+            ; --- Extern IRQ detect communication start code
 extcommstart
             movlb 0                     ; Select BANK 0
             clrf TMR0                   ; Set timer 0 to zero
             bcf INTCON, TMR0IF          ; reset timer 0 overflow bit
             movlb 1                     ; Select BANK 1
             bsf OPTION_REG, INTEDG      ; set interrupt on raising edge
-            goto end_ext_ir
+            movlw B'00000001'           ; Set PIstate to next level
+            movwf PISTATE
+            movlb 0                     ; Select BANK 0
+            bcf INTCON, INTF            ; Clear external interrupt flag
+            retfie                      ; Sets bit GIE of INTCON too
 
-
+            ;--- Extern IRQ switch to send code
 extcommsend                             ; we expect more then 150(~10ms) in TMR0
             movlb 0                     ; Select BANK 0
             btfsc INTCON, TMR0IF        ; check Timer 0 overflow bit
@@ -193,14 +214,51 @@ extcommsend                             ; we expect more then 150(~10ms) in TMR0
             btfsc STATUS, C             ; W should't be grater than 30 (180-150)
             goto errorcase              ; Time has to been to short = Error!!
             ; No timing error we go to send mode :)
+            movlw B'00000010'           ; Set PIstate to next level
+            movwf PISTATE
+            movlb 1                     ; Select BANK 1
+            bsf OPTION_REG, D'0'        ; Prescaler Timer 0 to 1:16
+            bsf OPTION_REG, D'1'        ; that mean 1 bit = 16 uS
+            bcf OPTION_REG, D'2'
+            movlw D'179'                ; Timer 0 to 0,500 ms
+            movwf TMR0                  ; 76 step to TMR0 IRQ
+            bsf TRISA,RA2               ; set RA2 as output
+            movlb 0                     ; Select BANK 0
+            bsf PORTA,RA2               ; set RA2 high
+            clrf BITCOUNTER_TX          ; Reset sendbitcounter
+            bcf INTCON, TMR0IF          ; reset timer 0 overflow bit
+            bsf INTCON, TMR0IE          ; Enable TMR0 interrupt
+            retfie                      ; Sets bit GIE of INTCON too
 
-;----------- interrupt teardown start here -------------------------------------
-            ; Clear interrupt source for next run
-end_ext_ir  bcf INTCON, INTF            ; Clear external interrupt flag
-            goto end_ir
+            ; --- Timer0 send code
+tmr0send    movf BITCOUNTER_TX, 0       ; Check Bitcounter
+            btfsc STATUS, Z             ; Bitcounter is zero
+            goto sendstart              ; Send start
 
-end_ir      retfie                      ; Sets bit GIE of INTCON too
+            ; For now end here with pi communication
+            ; Later switch to bit send routine
+            reset                       ; easy way for now!
+            retfie
 
+sendstart   movlb 2                     ; Select BANK 2
+            btfsc LATA,RA2              ; check output state high
+            goto sendstartlow
+            movlb 0                     ; Select BANK 0
+            bsf PORTA,RA2               ; set RA2 high
+            movlw D'1'
+            movwf BITCOUNTER_TX         ; Switch sendmode to first bit
+            goto sendstarttmr
+sendstartlow
+            movlb 0                     ; Select BANK 0
+            bcf PORTA,RA2               ; set RA2 low
+sendstarttmr                            ; init timer for next run
+            movlw D'55'                 ; Timer 0 to 1,600 ms
+            movwf TMR0                  ; 200 step to TMR0 IRQ
+            bcf INTCON, TMR0IF          ; reset timer 0 overflow bit
+            bsf INTCON, TMR0IE          ; Enable TMR0 interrupt
+            retfie                      ; Sets bit GIE of INTCON too
+
+;---------- error routine start here -------------------------------------------
 errorcase   reset                       ; not sure for now, what to do here
                                         ; reset?
 
